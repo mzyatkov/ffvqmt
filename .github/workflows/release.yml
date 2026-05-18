@@ -1,0 +1,187 @@
+name: Build & Release FFvqmt
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: windows-amd64
+            wails_platform: windows/amd64
+            artifact_name: FFvqmt-windows-amd64.zip
+            packager: pwsh
+          - os: ubuntu-22.04
+            label: linux-amd64
+            wails_platform: linux/amd64
+            artifact_name: FFvqmt-linux-amd64.tar.gz
+            packager: bash
+          - os: macos-14
+            label: macos-arm64
+            wails_platform: darwin/arm64
+            artifact_name: FFvqmt-macos-arm64.dmg
+            packager: bash
+          - os: macos-13
+            label: macos-amd64
+            wails_platform: darwin/amd64
+            artifact_name: FFvqmt-macos-amd64.dmg
+            packager: bash
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Wails CLI
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.9.2
+
+      # --- Linux system deps for webkit2gtk ----------------------------------
+      - name: Install Linux WebKit deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            pkg-config \
+            build-essential \
+            libsoup-3.0-dev \
+            file \
+            wget
+
+      - name: Install frontend deps
+        working-directory: frontend
+        run: npm ci || npm install
+
+      # --- Build -------------------------------------------------------------
+      - name: Wails build
+        run: wails build -platform ${{ matrix.wails_platform }} -clean -trimpath -ldflags "-s -w"
+
+      # --- Package: Windows --------------------------------------------------
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $stage = "stage"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item "build/bin/FFvqmt.exe" "$stage/FFvqmt.exe"
+          Copy-Item -Recurse "vmaf-models" "$stage/vmaf-models"
+          Copy-Item "README.md" "$stage/README.md"
+          if (Test-Path "LICENSE") { Copy-Item "LICENSE" "$stage/LICENSE" }
+          Compress-Archive -Path "$stage/*" -DestinationPath "${{ matrix.artifact_name }}" -Force
+
+      # --- Package: Linux ----------------------------------------------------
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          stage=stage
+          mkdir -p "$stage"
+          cp build/bin/FFvqmt "$stage/FFvqmt"
+          chmod +x "$stage/FFvqmt"
+          cp -r vmaf-models "$stage/vmaf-models"
+          cp README.md "$stage/"
+          [ -f LICENSE ] && cp LICENSE "$stage/" || true
+          cat > "$stage/FFvqmt.desktop" <<EOF
+          [Desktop Entry]
+          Type=Application
+          Name=FFvqmt
+          Exec=FFvqmt
+          Icon=ffvqmt
+          Categories=AudioVideo;Video;
+          Terminal=false
+          EOF
+          tar czf "${{ matrix.artifact_name }}" -C "$stage" .
+
+          # Optional AppImage
+          if command -v wget >/dev/null; then
+            wget -q https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage -O appimagetool
+            chmod +x appimagetool
+            appdir=FFvqmt.AppDir
+            mkdir -p $appdir/usr/bin
+            cp "$stage/FFvqmt" $appdir/usr/bin/FFvqmt
+            cp -r vmaf-models $appdir/usr/bin/vmaf-models
+            cp "$stage/FFvqmt.desktop" $appdir/FFvqmt.desktop
+            cp build/appicon.png $appdir/ffvqmt.png || true
+            cat > $appdir/AppRun <<'EOAR'
+          #!/bin/sh
+          HERE="$(dirname "$(readlink -f "$0")")"
+          exec "$HERE/usr/bin/FFvqmt" "$@"
+          EOAR
+            chmod +x $appdir/AppRun
+            ARCH=x86_64 ./appimagetool $appdir FFvqmt-linux-amd64.AppImage || echo "AppImage build skipped"
+          fi
+
+      # --- Package: macOS ---------------------------------------------------
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP="build/bin/FFvqmt.app"
+          if [ ! -d "$APP" ]; then
+            echo "App bundle not found at $APP"; ls -la build/bin || true; exit 1
+          fi
+          mkdir -p "$APP/Contents/Resources/vmaf-models"
+          cp -R vmaf-models/. "$APP/Contents/Resources/vmaf-models/" || true
+          DMG="${{ matrix.artifact_name }}"
+          TMP=$(mktemp -d)
+          cp -R "$APP" "$TMP/"
+          ln -s /Applications "$TMP/Applications"
+          hdiutil create -volname "FFvqmt" -srcfolder "$TMP" -ov -format UDZO "$DMG"
+
+      - name: Compute SHA256
+        shell: bash
+        run: |
+          set -e
+          for f in ${{ matrix.artifact_name }} FFvqmt-linux-amd64.AppImage; do
+            if [ -f "$f" ]; then
+              if command -v shasum >/dev/null; then shasum -a 256 "$f" > "$f.sha256"; else sha256sum "$f" > "$f.sha256"; fi
+            fi
+          done
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.label }}
+          path: |
+            ${{ matrix.artifact_name }}
+            ${{ matrix.artifact_name }}.sha256
+            FFvqmt-linux-amd64.AppImage
+            FFvqmt-linux-amd64.AppImage.sha256
+          if-no-files-found: warn
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*
+          generate_release_notes: true

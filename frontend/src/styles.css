@@ -1,0 +1,113 @@
+:root {
+  color-scheme: light dark;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica,
+    Arial, sans-serif;
+  --bg: #1b2636;
+  --bg-2: #243044;
+  --bg-3: #2d3a52;
+  --fg: #e9eef7;
+  --fg-dim: #a5b1c2;
+  --accent: #4f9eef;
+  --accent-2: #6dd3a8;
+  --warn: #f0ad4e;
+  --danger: #e85a5a;
+  --border: #344057;
+}
+
+html, body, #app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--fg);
+  overflow: hidden;
+}
+
+button {
+  background: var(--bg-3);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 13px;
+}
+button:hover:not(:disabled) { background: #3c4a64; }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.primary:hover:not(:disabled) { background: #66b1f2; }
+button.danger { background: var(--danger); border-color: var(--danger); }
+
+input[type="text"], input[type="number"], select {
+  background: var(--bg-2);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 13px;
+}
+
+label { font-size: 13px; }
+.row { display: flex; align-items: center; gap: 8px; }
+.col { display: flex; flex-direction: column; gap: 8px; }
+.muted { color: var(--fg-dim); }
+.spacer { flex: 1; }
+.scroll { overflow: auto; }
+
+.app-shell { display: grid; grid-template-rows: auto 1fr auto; height: 100vh; }
+.menu-bar {
+  display: flex; gap: 4px; padding: 4px 10px; background: var(--bg-2);
+  border-bottom: 1px solid var(--border); align-items: center;
+}
+.menu-bar .item { padding: 4px 10px; border-radius: 4px; cursor: pointer; user-select: none; }
+.menu-bar .item:hover { background: var(--bg-3); }
+
+.main {
+  display: grid;
+  grid-template-columns: 360px 1fr;
+  min-height: 0;
+}
+.sidebar { border-right: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; }
+.sidebar > section { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+.sidebar > section.flex { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+
+.workarea { display: flex; flex-direction: column; min-height: 0; }
+.statusbar {
+  display: flex; gap: 12px; padding: 4px 10px; background: var(--bg-2);
+  border-top: 1px solid var(--border); font-size: 12px; color: var(--fg-dim);
+}
+
+.file-list { flex: 1; overflow: auto; }
+.file-row {
+  display: grid; grid-template-columns: 24px 1fr 70px; align-items: center;
+  padding: 4px 6px; border-bottom: 1px dashed var(--border); gap: 6px;
+}
+.file-row .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
+.file-row.missing .name { color: var(--danger); }
+.file-row .badge { font-size: 10px; color: var(--fg-dim); }
+
+.drop-zone {
+  border: 2px dashed var(--border); border-radius: 8px; padding: 16px;
+  text-align: center; color: var(--fg-dim); font-size: 13px;
+}
+.drop-zone.dragging { border-color: var(--accent); color: var(--accent); }
+
+.metrics { display: flex; flex-wrap: wrap; gap: 10px 16px; }
+.tabs { display: flex; gap: 4px; padding: 4px 6px; border-bottom: 1px solid var(--border); background: var(--bg-2); }
+.tabs .tab { padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+.tabs .tab.active { background: var(--accent); color: #fff; }
+
+.chart-wrap { flex: 1; min-height: 0; padding: 4px; }
+.chart-wrap .plot { width: 100%; height: 100%; }
+
+table.summary { width: 100%; border-collapse: collapse; font-size: 12px; }
+table.summary th, table.summary td { border-bottom: 1px solid var(--border); padding: 4px 6px; text-align: left; }
+table.summary th { color: var(--fg-dim); font-weight: 500; }
+
+.toast {
+  position: fixed; bottom: 16px; right: 16px; background: var(--bg-3);
+  border: 1px solid var(--border); border-radius: 6px; padding: 10px 14px;
+  z-index: 1000; max-width: 380px; box-shadow: 0 6px 24px rgba(0,0,0,.4);
+}
+.toast.error { border-color: var(--danger); }
+.toast.success { border-color: var(--accent-2); }
