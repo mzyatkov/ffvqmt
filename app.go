@@ -71,12 +71,34 @@ func (a *App) DetectFFmpeg() (*ffmpeg.ProbeInfo, error) {
 
 // MediaInfo returns ffprobe details for a single file.
 func (a *App) MediaInfo(path string) (*ffmpeg.MediaInfo, error) {
-	return a.prober.MediaInfo(path)
+	return a.prober.MediaInfoRaw(path, nil)
+}
+
+// MediaInfoRaw is the raw-aware variant of MediaInfo: when path is a
+// header-less raw container (.yuv etc.), raw must carry the parameters
+// required to interpret it.
+func (a *App) MediaInfoRaw(path string, raw *ffmpeg.RawFormat) (*ffmpeg.MediaInfo, error) {
+	return a.prober.MediaInfoRaw(path, raw)
+}
+
+// IsRawVideo reports whether path needs a manual raw-format configuration.
+func (a *App) IsRawVideo(path string) bool {
+	return ffmpeg.IsRawVideoPath(path)
+}
+
+// DefaultRawFormat returns reasonable defaults for a raw-format path.
+func (a *App) DefaultRawFormat(path string) *ffmpeg.RawFormat {
+	return ffmpeg.DefaultRawFormat(path)
 }
 
 // MakeThumbnail extracts a representative frame to PNG and returns its path.
 func (a *App) MakeThumbnail(path string) (string, error) {
 	return a.prober.Thumbnail(path)
+}
+
+// MakeThumbnailRaw is the raw-aware variant of MakeThumbnail.
+func (a *App) MakeThumbnailRaw(path string, raw *ffmpeg.RawFormat) (string, error) {
+	return a.prober.ThumbnailRaw(path, raw)
 }
 
 // SelectFiles opens a native file picker; returns selected paths.
@@ -85,7 +107,8 @@ func (a *App) SelectFiles(multi bool, title string) ([]string, error) {
 		return wailsruntime.OpenMultipleFilesDialog(a.ctx, wailsruntime.OpenDialogOptions{
 			Title: title,
 			Filters: []wailsruntime.FileFilter{
-				{DisplayName: "Video files", Pattern: "*.mp4;*.mkv;*.avi;*.mov;*.webm;*.y4m;*.yuv;*.avs;*.ts"},
+				{DisplayName: "Video files", Pattern: "*.mp4;*.mkv;*.avi;*.mov;*.webm;*.y4m;*.yuv;*.avs;*.ts;*.raw;*.rgb;*.bgr;*.gray;*.y"},
+				{DisplayName: "Raw video", Pattern: "*.yuv;*.raw;*.rgb;*.bgr;*.gray;*.y"},
 				{DisplayName: "All files", Pattern: "*.*"},
 			},
 		})

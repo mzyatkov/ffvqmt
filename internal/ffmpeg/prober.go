@@ -58,6 +58,10 @@ type MediaInfo struct {
 	VideoCodec string  `json:"videoCodec"`
 	AudioCodec string  `json:"audioCodec"`
 	SizeBytes  int64   `json:"sizeBytes"`
+	// IsRaw is true when the file is a header-less raw container (.yuv etc.)
+	// that requires the user to specify Format / PixFmt / Width / Height /
+	// FrameRate before any metric can be calculated.
+	IsRaw bool `json:"isRaw"`
 }
 
 // resolve locates ffmpeg + ffprobe; cached on first call.
@@ -220,24 +224,57 @@ func discoverVMAFModels() []string {
 }
 
 // MediaInfo runs ffprobe -show_streams -show_format.
+// When the file is a raw container and a RawFormat is provided, ffprobe is
+// invoked with the matching pre-input flags so it can still report duration
+// and frame counts; otherwise the call short-circuits and returns a stub
+// MediaInfo with IsRaw=true so the UI can prompt for the missing details.
 func (p *Prober) MediaInfo(path string) (*MediaInfo, error) {
+	return p.MediaInfoRaw(path, nil)
+}
+
+// MediaInfoRaw is the raw-aware variant of MediaInfo.
+func (p *Prober) MediaInfoRaw(path string, raw *RawFormat) (*MediaInfo, error) {
 	if err := p.resolve(); err != nil {
 		return nil, err
+	}
+	isRaw := IsRawVideoPath(path)
+	if isRaw && !raw.complete() {
+		// Return a minimal record so the UI can collect the missing
+		// parameters from the user.
+		m := &MediaInfo{Path: path, Format: "rawvideo", IsRaw: true}
+		if st, err := os.Stat(path); err == nil {
+			m.SizeBytes = st.Size()
+		}
+		if raw != nil {
+			m.Width = raw.Width
+			m.Height = raw.Height
+			m.PixFmt = raw.PixFmt
+			m.FrameRate = raw.FrameRate
+		}
+		return m, nil
 	}
 	if p.ffprobePath == "" {
 		return nil, errors.New("ffprobe not found")
 	}
-	out, err := run(p.ffprobePath,
-		"-v", "quiet",
+	// Raw-input flags MUST come before the file path, AND before global
+	// output options for some ffprobe versions to pick them up. We also
+	// use `-v error` (not `quiet`) so an actual failure surfaces in the
+	// returned error string instead of "exit status 1".
+	args := []string{
+		"-v", "error",
 		"-print_format", "json",
 		"-show_format",
 		"-show_streams",
-		path,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("ffprobe: %w", err)
 	}
-	var raw struct {
+	if isRaw {
+		args = append(args, raw.inputArgs()...)
+	}
+	args = append(args, path)
+	out, err := run(p.ffprobePath, args...)
+	if err != nil {
+		return nil, fmt.Errorf("ffprobe %v: %w", args, err)
+	}
+	var probed struct {
 		Format struct {
 			Duration string `json:"duration"`
 			BitRate  string `json:"bit_rate"`
@@ -256,14 +293,14 @@ func (p *Prober) MediaInfo(path string) (*MediaInfo, error) {
 			NbFrames   string `json:"nb_frames"`
 		} `json:"streams"`
 	}
-	if err := json.Unmarshal([]byte(out), &raw); err != nil {
+	if err := json.Unmarshal([]byte(out), &probed); err != nil {
 		return nil, err
 	}
-	m := &MediaInfo{Path: path, Format: raw.Format.Name}
-	m.DurationS, _ = strconv.ParseFloat(raw.Format.Duration, 64)
-	m.Bitrate, _ = strconv.ParseInt(raw.Format.BitRate, 10, 64)
-	m.SizeBytes, _ = strconv.ParseInt(raw.Format.Size, 10, 64)
-	for _, s := range raw.Streams {
+	m := &MediaInfo{Path: path, Format: probed.Format.Name}
+	m.DurationS, _ = strconv.ParseFloat(probed.Format.Duration, 64)
+	m.Bitrate, _ = strconv.ParseInt(probed.Format.BitRate, 10, 64)
+	m.SizeBytes, _ = strconv.ParseInt(probed.Format.Size, 10, 64)
+	for _, s := range probed.Streams {
 		switch s.CodecType {
 		case "video":
 			if m.Width == 0 {
@@ -281,6 +318,26 @@ func (p *Prober) MediaInfo(path string) (*MediaInfo, error) {
 			}
 		}
 	}
+	m.IsRaw = isRaw
+	if isRaw {
+		// ffprobe sometimes can't determine duration for piped rawvideo;
+		// fall back to size / (bytes_per_frame * fps) when possible.
+		if m.DurationS == 0 && raw != nil && raw.complete() {
+			if bpp := bytesPerPixel(raw.PixFmt); bpp > 0 && m.SizeBytes == 0 {
+				if st, err := os.Stat(path); err == nil {
+					m.SizeBytes = st.Size()
+				}
+			}
+			if bpp := bytesPerPixel(raw.PixFmt); bpp > 0 && m.SizeBytes > 0 {
+				frameBytes := float64(raw.Width*raw.Height) * bpp
+				if frameBytes > 0 {
+					frames := float64(m.SizeBytes) / frameBytes
+					m.FrameCount = int64(frames)
+					m.DurationS = frames / raw.FrameRate
+				}
+			}
+		}
+	}
 	return m, nil
 }
 
@@ -289,10 +346,18 @@ func (p *Prober) MediaInfo(path string) (*MediaInfo, error) {
 // rendered by the WebView, which does not allow loading file:// URLs from
 // the wails:// / http:// origin.
 func (p *Prober) Thumbnail(path string) (string, error) {
+	return p.ThumbnailRaw(path, nil)
+}
+
+// ThumbnailRaw is the raw-aware variant of Thumbnail.
+func (p *Prober) ThumbnailRaw(path string, raw *RawFormat) (string, error) {
 	if err := p.resolve(); err != nil {
 		return "", err
 	}
-	info, err := p.MediaInfo(path)
+	if IsRawVideoPath(path) && !raw.complete() {
+		return "", errors.New("raw video: please specify format, pixel format, size and frame rate")
+	}
+	info, err := p.MediaInfoRaw(path, raw)
 	ts := 1.0
 	if err == nil && info.DurationS > 1 {
 		ts = info.DurationS * 0.05
@@ -304,20 +369,35 @@ func (p *Prober) Thumbnail(path string) (string, error) {
 	_ = os.MkdirAll(outDir, 0o755)
 	stamp := fmt.Sprintf("%d", time.Now().UnixNano())
 	outPath := filepath.Join(outDir, sanitize(filepath.Base(path))+"-"+stamp+".png")
-	if _, err = run(p.ffmpegPath,
+	args := []string{
 		"-hide_banner", "-loglevel", "error",
-		"-ss", strconv.FormatFloat(ts, 'f', 3, 64),
-		"-i", path,
+	}
+	isRawInput := IsRawVideoPath(path)
+	// Non-raw containers support fast input-seek (`-ss` before `-i`).
+	// Raw video has no index, the synthetic duration can easily be wrong,
+	// and short .yuv files often have < 1 second of footage — seeking past
+	// EOF makes ffmpeg silently produce no output file. Just take frame 0.
+	if !isRawInput && ts > 0 {
+		args = append(args, "-ss", strconv.FormatFloat(ts, 'f', 3, 64))
+	}
+	if isRawInput {
+		args = append(args, raw.inputArgs()...)
+	}
+	args = append(args, "-i", path)
+	args = append(args,
 		"-frames:v", "1",
 		"-vf", "scale=320:-1",
 		"-y", outPath,
-	); err != nil {
-		return "", err
+	)
+	if _, err = run(p.ffmpegPath, args...); err != nil {
+		return "", fmt.Errorf("ffmpeg thumbnail %v: %w", args, err)
 	}
 	defer os.Remove(outPath)
 	data, err := os.ReadFile(outPath)
 	if err != nil {
-		return "", fmt.Errorf("read thumbnail: %w", err)
+		// ffmpeg returned success but wrote nothing — usually means -ss
+		// past EOF or invalid pixel-format / resolution combo for raw.
+		return "", fmt.Errorf("thumbnail not produced (check raw size/pix_fmt/fps): %w", err)
 	}
 	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(data), nil
 }

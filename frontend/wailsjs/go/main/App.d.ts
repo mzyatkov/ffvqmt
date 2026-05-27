@@ -7,15 +7,23 @@ import {metrics} from '../models';
 
 export function CancelRun():Promise<void>;
 
+export function DefaultRawFormat(arg1:string):Promise<ffmpeg.RawFormat>;
+
 export function DetectFFmpeg():Promise<ffmpeg.ProbeInfo>;
 
 export function GetInitialOptions():Promise<cli.Options>;
+
+export function IsRawVideo(arg1:string):Promise<boolean>;
 
 export function LoadProject(arg1:string):Promise<project.Project>;
 
 export function MakeThumbnail(arg1:string):Promise<string>;
 
+export function MakeThumbnailRaw(arg1:string,arg2:ffmpeg.RawFormat):Promise<string>;
+
 export function MediaInfo(arg1:string):Promise<ffmpeg.MediaInfo>;
+
+export function MediaInfoRaw(arg1:string,arg2:ffmpeg.RawFormat):Promise<ffmpeg.MediaInfo>;
 
 export function SaveFileDialog(arg1:string,arg2:string):Promise<string>;
 

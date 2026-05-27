@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import { ref, computed, reactive } from "vue";
-import { API, type Metric, type ProbeInfo, type MediaInfo, type RunRequest } from "../api/wails";
+import { API, type Metric, type ProbeInfo, type MediaInfo, type RunRequest, type RawFormat } from "../api/wails";
 
 export interface DistFile {
   path: string;
@@ -8,6 +8,22 @@ export interface DistFile {
   exists: boolean;
   info?: MediaInfo;
   error?: string;
+  raw?: RawFormat | null;     // user-provided raw-format params (.yuv etc.)
+  needsRaw?: boolean;         // true when the file is a raw container
+  thumb?: string | null;      // data URI of preview
+}
+
+export function isRawExt(p: string): boolean {
+  const ext = p.split(/[\\\/]/).pop()?.split(".").pop()?.toLowerCase() || "";
+  return ["yuv", "raw", "rgb", "bgr", "gray", "y"].includes(ext);
+}
+
+export function defaultRawFor(_path: string): RawFormat {
+  return { format: "rawvideo", pixFmt: "yuv420p", width: 1920, height: 1080, frameRate: 30 };
+}
+
+function rawComplete(r: RawFormat | null | undefined): r is RawFormat {
+  return !!r && !!r.format && !!r.pixFmt && r.width > 0 && r.height > 0 && r.frameRate > 0;
 }
 
 export interface Sample {
@@ -30,6 +46,8 @@ export const useSession = defineStore("session", () => {
   const refPath = ref<string>("");
   const refInfo = ref<MediaInfo | null>(null);
   const refThumb = ref<string | null>(null);
+  const refRaw = ref<RawFormat | null>(null);
+  const refNeedsRaw = ref(false);
 
   const distFiles = ref<DistFile[]>([]);
 
@@ -101,30 +119,94 @@ export const useSession = defineStore("session", () => {
     refPath.value = path;
     refInfo.value = null;
     refThumb.value = null;
+    refNeedsRaw.value = isRawExt(path);
+    if (refNeedsRaw.value && !refRaw.value) {
+      refRaw.value = defaultRawFor(path);
+    }
+    await refreshReferenceInfo();
+  }
+
+  async function refreshReferenceInfo() {
+    const path = refPath.value;
+    if (!path) return;
+    const raw = refNeedsRaw.value ? refRaw.value : null;
+    if (refNeedsRaw.value && !rawComplete(raw)) {
+      // wait for the user to fill in the form
+      return;
+    }
     try {
-      refInfo.value = await API.mediaInfo(path);
+      refInfo.value = await API.mediaInfo(path, raw);
     } catch (e: any) {
       lastError.value = `ref media info: ${e?.message || e}`;
     }
+    // Clear first so Vue sees a real src change even if the new data URI
+    // happens to be identical to the previous one.
+    refThumb.value = null;
     try {
-      refThumb.value = await API.makeThumbnail(path);
-    } catch {
-      /* thumbnail is best-effort */
+      refThumb.value = await API.makeThumbnail(path, raw);
+    } catch (e: any) {
+      // surface raw-input errors (wrong size / pix_fmt) instead of just
+      // dropping the thumbnail silently.
+      lastError.value = `ref thumbnail: ${e?.message || e}`;
     }
+  }
+
+  async function setRefRaw(r: RawFormat) {
+    refRaw.value = { ...r };
+    await refreshReferenceInfo();
   }
 
   async function addDistFiles(paths: string[]) {
     for (const p of paths) {
       if (distFiles.value.some((d) => d.path === p)) continue;
-      const entry: DistFile = { path: p, active: true, exists: true };
+      const needsRaw = isRawExt(p);
+      const entry: DistFile = {
+        path: p,
+        active: true,
+        exists: true,
+        needsRaw,
+        raw: needsRaw ? defaultRawFor(p) : null,
+      };
       distFiles.value.push(entry);
+      await refreshDistInfo(entry);
+    }
+  }
+
+  async function refreshDistInfo(entry: DistFile) {
+    const raw = entry.needsRaw ? entry.raw || null : null;
+    if (entry.needsRaw && !rawComplete(raw)) {
+      // Probe still returns a stub so the user sees the row
       try {
-        entry.info = await API.mediaInfo(p);
+        entry.info = await API.mediaInfo(entry.path, raw);
       } catch (e: any) {
         entry.error = e?.message || String(e);
-        entry.exists = false;
       }
+      entry.thumb = null;
+      return;
     }
+    try {
+      entry.info = await API.mediaInfo(entry.path, raw);
+      entry.error = undefined;
+      entry.exists = true;
+    } catch (e: any) {
+      entry.error = e?.message || String(e);
+      entry.exists = false;
+    }
+    // Regenerate the thumbnail with the new params; clear first so Vue
+    // always sees a real src change.
+    entry.thumb = null;
+    try {
+      entry.thumb = await API.makeThumbnail(entry.path, raw);
+    } catch (e: any) {
+      lastError.value = `${entry.path} thumbnail: ${e?.message || e}`;
+    }
+  }
+
+  async function setDistRaw(path: string, r: RawFormat) {
+    const entry = distFiles.value.find((d) => d.path === path);
+    if (!entry) return;
+    entry.raw = { ...r };
+    await refreshDistInfo(entry);
   }
 
   function removeDist(path: string) {
@@ -144,7 +226,10 @@ export const useSession = defineStore("session", () => {
       !!probe.value &&
       !!refPath.value &&
       refInfo.value !== null &&
-      distFiles.value.some((d) => d.active && d.exists) &&
+      (!refNeedsRaw.value || rawComplete(refRaw.value)) &&
+      distFiles.value.some(
+        (d) => d.active && d.exists && (!d.needsRaw || rawComplete(d.raw)),
+      ) &&
       enabledMetrics.value.length > 0 &&
       !running.value,
   );
@@ -156,9 +241,18 @@ export const useSession = defineStore("session", () => {
     lastError.value = null;
     running.value = true;
 
+    const activeDist = distFiles.value.filter(
+      (d) => d.active && d.exists && (!d.needsRaw || rawComplete(d.raw)),
+    );
+    const distRaw: Record<string, RawFormat> = {};
+    for (const d of activeDist) {
+      if (d.needsRaw && rawComplete(d.raw)) distRaw[d.path] = d.raw;
+    }
     const req: RunRequest = {
       refPath: refPath.value,
-      distPaths: distFiles.value.filter((d) => d.active && d.exists).map((d) => d.path),
+      distPaths: activeDist.map((d) => d.path),
+      refRaw: refNeedsRaw.value && rawComplete(refRaw.value) ? refRaw.value : null,
+      distRaw: Object.keys(distRaw).length ? distRaw : undefined,
       metrics: enabledMetrics.value,
       skip: options.skip,
       duration: options.duration,
@@ -303,11 +397,12 @@ export const useSession = defineStore("session", () => {
 
   return {
     probe, detecting, detectError,
-    refPath, refInfo, refThumb,
+    refPath, refInfo, refThumb, refRaw, refNeedsRaw,
     distFiles, metrics, options,
     running, progress, lastError,
     series, enabledMetrics, canStart,
-    detect, setReference, addDistFiles, removeDist, clearDist,
+    detect, setReference, setRefRaw, setDistRaw, refreshDistInfo,
+    addDistFiles, removeDist, clearDist,
     start, cancel, bindEvents, loadInitialFromCLI, handleDroppedFiles,
   };
 });

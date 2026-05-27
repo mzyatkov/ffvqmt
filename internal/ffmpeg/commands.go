@@ -31,6 +31,8 @@ type MetricCmd struct {
 type BuildOptions struct {
 	RefPath        string
 	DistPath       string
+	RefRaw         *RawFormat // optional raw-input flags for the reference file
+	DistRaw        *RawFormat // optional raw-input flags for the distorted file
 	Skip           float64 // seconds, -ss
 	Duration       float64 // seconds, -t
 	Scaling        string  // ffmpeg sws flag
@@ -59,10 +61,12 @@ func Build(kind MetricKind, o BuildOptions) (*MetricCmd, error) {
 	if o.Skip > 0 {
 		args = append(args, "-ss", fmtFloat(o.Skip))
 	}
+	args = append(args, o.DistRaw.inputArgs()...)
 	args = append(args, "-i", o.DistPath)
 	if o.Skip > 0 {
 		args = append(args, "-ss", fmtFloat(o.Skip))
 	}
+	args = append(args, o.RefRaw.inputArgs()...)
 	args = append(args, "-i", o.RefPath)
 	if o.Duration > 0 {
 		args = append(args, "-t", fmtFloat(o.Duration))
