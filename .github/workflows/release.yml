@@ -30,7 +30,7 @@ jobs:
             wails_platform: darwin/arm64
             artifact_name: FFvqmt-macos-arm64.dmg
             packager: bash
-          - os: macos-13
+          - os: macos-14
             label: macos-amd64
             wails_platform: darwin/amd64
             artifact_name: FFvqmt-macos-amd64.dmg
