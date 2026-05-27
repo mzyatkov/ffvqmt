@@ -66,7 +66,7 @@ function fmtBitrate(b: number) {
     </div>
 
     <img v-if="session.refThumb"
-         :src="'file://' + session.refThumb"
+         :src="session.refThumb"
          alt="thumbnail"
          style="max-width:100%; max-height:160px; object-fit:contain; background:#000; border-radius:4px"/>
 

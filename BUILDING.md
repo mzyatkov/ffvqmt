@@ -11,7 +11,7 @@ executable on Windows, Linux and macOS.
 | Go | 1.22 | backend + Wails build orchestration |
 | Node.js | 20 | frontend (Vite + Vue) |
 | Wails CLI | 2.9.2 | platform packaging |
-| ffmpeg | 4.3+ (5.1+ recommended) | runtime dependency, **not bundled** |
+| ffmpeg | 4.3+ (5.1+ recommended) | local dev only — release builds bundle a static ffmpeg+libvmaf |
 
 Install Wails CLI once:
 
@@ -53,13 +53,25 @@ Go automatically. Frontend changes hot-reload instantly.
 wails build -clean -trimpath -ldflags "-s -w"
 ```
 
+The `postbuild:<platform>` hook in [`wails.json`](wails.json:1) runs
+[`build/download-ffmpeg.sh`](build/download-ffmpeg.sh:1) (or
+[`build/download-ffmpeg.ps1`](build/download-ffmpeg.ps1:1) on Windows) which
+downloads a static `ffmpeg` + `ffprobe` with `libvmaf` and `xpsnr` and places
+them next to the binary (and inside `FFvqmt.app/Contents/MacOS` on macOS).
+The downloaded binaries are cached for 24h to avoid re-downloading on every
+build; delete `build/bin/ffmpeg*` to force a refresh.
+
 Output:
 
-| Platform | Path |
-| --- | --- |
-| Windows | `build/bin/FFvqmt.exe` |
-| Linux   | `build/bin/FFvqmt` |
-| macOS   | `build/bin/FFvqmt.app` |
+| Platform | Path | Bundled files |
+| --- | --- | --- |
+| Windows | `build/bin/FFvqmt.exe` | `ffmpeg.exe`, `ffprobe.exe` |
+| Linux   | `build/bin/FFvqmt`     | `ffmpeg`, `ffprobe` |
+| macOS   | `build/bin/FFvqmt.app` | `Contents/MacOS/ffmpeg`, `Contents/MacOS/ffprobe` |
+
+Skip ffmpeg bundling for a faster dev iteration by running with the env var
+`FFVQMT_SKIP_FFMPEG=1` — the app will fall back to the system `ffmpeg` on
+PATH at runtime.
 
 ## 4. Cross-platform release builds
 
@@ -100,19 +112,25 @@ Wails — use the CI matrix instead.
 
 ## 5. About FFmpeg
 
-FFvqmt calls an external `ffmpeg` binary; it is **not** bundled to keep
-artifacts small and to let users choose a build with VMAF / XPSNR support.
+Release artifacts **bundle** a statically-linked `ffmpeg` + `ffprobe` with
+`libvmaf` (and XPSNR) already enabled, so the app works on a clean machine
+without installing anything:
 
-Put `ffmpeg` (and `ffprobe`) into:
+| Platform | Source |
+| --- | --- |
+| Windows / Linux | [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds) — `*-lgpl` static build (libvmaf, xpsnr; without x264/x265) |
+| macOS (arm64/amd64) | [osxexperts.net](https://www.osxexperts.net/) — static builds with libvmaf |
 
-- the system `PATH`, or
-- the same directory as the FFvqmt executable, or
-- pass `-ffmpeg-dir=/path/to/dir` on the command line.
+Lookup order at runtime (see [`prober.tryFind()`](internal/ffmpeg/prober.go:74)):
 
-Recommended distributions:
+1. `-ffmpeg-dir=/path/to/dir` CLI flag
+2. Directory of the FFvqmt executable (Windows/Linux) or
+   `FFvqmt.app/Contents/MacOS` and `…/Contents/Resources` (macOS) — **bundle**
+3. System `PATH`
+4. Homebrew defaults on macOS (`/opt/homebrew/bin`, `/usr/local/bin`)
 
-- **Windows / Linux** — https://www.gyan.dev/ffmpeg/builds/ or https://github.com/BtbN/FFmpeg-Builds
-- **macOS** — `brew install ffmpeg` or https://evermeet.cx/ffmpeg/
+For local dev builds (`wails dev` / `wails build` without CI), install ffmpeg
+yourself — `brew install ffmpeg`, `apt install ffmpeg`, or a BtbN release.
 
 ## 6. Code signing
 

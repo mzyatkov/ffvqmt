@@ -31,6 +31,14 @@ async function pickResultsFile() {
     <div class="row" style="gap:16px; flex-wrap:wrap">
       <label>Skip (s) <input type="number" v-model.number="session.options.skip" min="0" step="0.1"/></label>
       <label>Duration (s) <input type="number" v-model.number="session.options.duration" min="0" step="0.1"/></label>
+      <label>Start frame
+        <input type="number" v-model.number="session.options.startFrame" min="0" step="1"
+               :title="'Frame range overrides Skip/Duration when > 0. Total frames: ' + (session.refInfo?.frameCount ?? '?')"/>
+      </label>
+      <label>End frame
+        <input type="number" v-model.number="session.options.endFrame" min="0" step="1"
+               :title="'Frame range overrides Skip/Duration when > Start frame. Total frames: ' + (session.refInfo?.frameCount ?? '?')"/>
+      </label>
       <label>Scaling
         <select v-model="session.options.scaling">
           <option v-for="s in ['NEIGHBOR','GAUSS','BILINEAR','BICUBIC','LANCZOS','SINC','SPLINE']" :key="s" :value="s">{{ s }}</option>

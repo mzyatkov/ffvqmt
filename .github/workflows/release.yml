@@ -72,8 +72,24 @@ jobs:
         run: npm ci || npm install
 
       # --- Build -------------------------------------------------------------
+      # `wails build` runs the postbuild:<platform> hook from wails.json, which
+      # downloads a static ffmpeg + ffprobe (with libvmaf and xpsnr) into
+      # build/bin/. No system ffmpeg is required.
       - name: Wails build
         run: wails build -platform ${{ matrix.wails_platform }} -clean -trimpath -ldflags "-s -w"
+
+      - name: Verify bundled ffmpeg
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            ff="build/bin/ffmpeg.exe"
+          else
+            ff="build/bin/ffmpeg"
+          fi
+          test -x "$ff" || (echo "bundled ffmpeg missing at $ff"; exit 1)
+          "$ff" -hide_banner -version | head -1
+          "$ff" -hide_banner -filters | grep -E 'libvmaf|xpsnr' || (echo "libvmaf/xpsnr missing"; exit 1)
 
       # --- Package: Windows --------------------------------------------------
       - name: Package (Windows)
@@ -82,7 +98,9 @@ jobs:
         run: |
           $stage = "stage"
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
-          Copy-Item "build/bin/FFvqmt.exe" "$stage/FFvqmt.exe"
+          Copy-Item "build/bin/FFvqmt.exe"  "$stage/FFvqmt.exe"
+          Copy-Item "build/bin/ffmpeg.exe"  "$stage/ffmpeg.exe"
+          Copy-Item "build/bin/ffprobe.exe" "$stage/ffprobe.exe"
           Copy-Item -Recurse "vmaf-models" "$stage/vmaf-models"
           Copy-Item "README.md" "$stage/README.md"
           if (Test-Path "LICENSE") { Copy-Item "LICENSE" "$stage/LICENSE" }
@@ -96,8 +114,10 @@ jobs:
           set -euo pipefail
           stage=stage
           mkdir -p "$stage"
-          cp build/bin/FFvqmt "$stage/FFvqmt"
-          chmod +x "$stage/FFvqmt"
+          cp build/bin/FFvqmt  "$stage/FFvqmt"
+          cp build/bin/ffmpeg  "$stage/ffmpeg"
+          cp build/bin/ffprobe "$stage/ffprobe"
+          chmod +x "$stage/FFvqmt" "$stage/ffmpeg" "$stage/ffprobe"
           cp -r vmaf-models "$stage/vmaf-models"
           cp README.md "$stage/"
           [ -f LICENSE ] && cp LICENSE "$stage/" || true
@@ -118,7 +138,9 @@ jobs:
             chmod +x appimagetool
             appdir=FFvqmt.AppDir
             mkdir -p $appdir/usr/bin
-            cp "$stage/FFvqmt" $appdir/usr/bin/FFvqmt
+            cp "$stage/FFvqmt"  $appdir/usr/bin/FFvqmt
+            cp "$stage/ffmpeg"  $appdir/usr/bin/ffmpeg
+            cp "$stage/ffprobe" $appdir/usr/bin/ffprobe
             cp -r vmaf-models $appdir/usr/bin/vmaf-models
             cp "$stage/FFvqmt.desktop" $appdir/FFvqmt.desktop
             cp build/appicon.png $appdir/ffvqmt.png || true
@@ -143,6 +165,10 @@ jobs:
           fi
           mkdir -p "$APP/Contents/Resources/vmaf-models"
           cp -R vmaf-models/. "$APP/Contents/Resources/vmaf-models/" || true
+          # ffmpeg+ffprobe are already copied into $APP/Contents/MacOS by the
+          # postbuild hook (see build/download-ffmpeg.sh).
+          test -x "$APP/Contents/MacOS/ffmpeg"  || (echo "bundled ffmpeg missing in .app"; exit 1)
+          test -x "$APP/Contents/MacOS/ffprobe" || (echo "bundled ffprobe missing in .app"; exit 1)
           DMG="${{ matrix.artifact_name }}"
           TMP=$(mktemp -d)
           cp -R "$APP" "$TMP/"

@@ -65,6 +65,8 @@ export interface RunRequest {
   metrics: string[];
   skip: number;
   duration: number;
+  startFrame: number;
+  endFrame: number;
   scaling: string;
   vmafModel: string;
   vmafPool: string;

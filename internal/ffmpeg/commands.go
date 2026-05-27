@@ -154,6 +154,9 @@ func buildFilter(kind MetricKind, o BuildOptions, tw, th int, sws string) (strin
 			}
 		} else if o.VMAFPhone {
 			opts = append(opts, "model=version=vmaf_v0.6.1\\:enable_transform=true")
+		} else if o.InBuildVMAF {
+			// Use built-in HD model as default when no model specified
+			opts = append(opts, "model=version=vmaf_v0.6.1")
 		}
 		if o.NThreads > 0 {
 			opts = append(opts, "n_threads="+strconv.Itoa(o.NThreads))

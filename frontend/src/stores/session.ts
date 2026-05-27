@@ -43,6 +43,8 @@ export const useSession = defineStore("session", () => {
   const options = reactive({
     skip: 0,
     duration: 0,
+    startFrame: 0,
+    endFrame: 0,
     scaling: "BICUBIC",
     vmafModel: "",
     vmafPool: "MEAN",
@@ -160,6 +162,8 @@ export const useSession = defineStore("session", () => {
       metrics: enabledMetrics.value,
       skip: options.skip,
       duration: options.duration,
+      startFrame: options.startFrame,
+      endFrame: options.endFrame,
       scaling: options.scaling,
       vmafModel: options.vmafModel,
       vmafPool: options.vmafPool,

@@ -6,6 +6,12 @@
   "frontend:build": "npm run build",
   "frontend:dev:watcher": "npm run dev",
   "frontend:dev:serverUrl": "auto",
+  "postBuildHooks": {
+    "linux/amd64":   "bash ../download-ffmpeg.sh . linux",
+    "darwin/arm64":  "bash ../download-ffmpeg.sh . darwin-arm64",
+    "darwin/amd64":  "bash ../download-ffmpeg.sh . darwin-amd64",
+    "windows/amd64": "pwsh -File ../download-ffmpeg.ps1 ."
+  },
   "author": {
     "name": "FFvqmt Contributors",
     "email": "noreply@ffvqmt.dev"

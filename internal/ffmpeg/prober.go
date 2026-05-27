@@ -5,6 +5,7 @@ package ffmpeg
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -71,20 +72,45 @@ func (p *Prober) resolve() error {
 		exePR += ".exe"
 	}
 	tryFind := func(name string) string {
+		// 1. Explicit -ffmpeg-dir wins.
 		if p.Dir != "" {
 			cand := filepath.Join(p.Dir, name)
 			if _, err := os.Stat(cand); err == nil {
 				return cand
 			}
 		}
+		// 2. Bundled binary next to the executable (incl. macOS .app/Contents/MacOS
+		//    and .app/Contents/Resources/ffmpeg).
+		if exe, err := os.Executable(); err == nil {
+			dir := filepath.Dir(exe)
+			candidates := []string{
+				filepath.Join(dir, name),
+				filepath.Join(dir, "ffmpeg", name),
+			}
+			if runtime.GOOS == "darwin" {
+				// dir is .../FFvqmt.app/Contents/MacOS
+				candidates = append(candidates,
+					filepath.Join(dir, "..", "Resources", name),
+					filepath.Join(dir, "..", "Resources", "ffmpeg", name),
+				)
+			}
+			for _, cand := range candidates {
+				if _, err := os.Stat(cand); err == nil {
+					return cand
+				}
+			}
+		}
+		// 3. System PATH.
 		if x, err := exec.LookPath(name); err == nil {
 			return x
 		}
-		// also try program directory
-		if exe, err := os.Executable(); err == nil {
-			cand := filepath.Join(filepath.Dir(exe), name)
-			if _, err := os.Stat(cand); err == nil {
-				return cand
+		// 4. macOS GUI apps don't inherit shell PATH — try Homebrew.
+		if runtime.GOOS == "darwin" {
+			for _, dir := range []string{"/opt/homebrew/bin", "/usr/local/bin"} {
+				cand := filepath.Join(dir, name)
+				if _, err := os.Stat(cand); err == nil {
+					return cand
+				}
 			}
 		}
 		return ""
@@ -258,8 +284,10 @@ func (p *Prober) MediaInfo(path string) (*MediaInfo, error) {
 	return m, nil
 }
 
-// Thumbnail generates a small PNG snapshot of path at 5% into the video.
-// Returns absolute path of the thumbnail.
+// Thumbnail generates a small PNG snapshot of path at 5% into the video
+// and returns it as a data URI (data:image/png;base64,...) so it can be
+// rendered by the WebView, which does not allow loading file:// URLs from
+// the wails:// / http:// origin.
 func (p *Prober) Thumbnail(path string) (string, error) {
 	if err := p.resolve(); err != nil {
 		return "", err
@@ -276,18 +304,22 @@ func (p *Prober) Thumbnail(path string) (string, error) {
 	_ = os.MkdirAll(outDir, 0o755)
 	stamp := fmt.Sprintf("%d", time.Now().UnixNano())
 	outPath := filepath.Join(outDir, sanitize(filepath.Base(path))+"-"+stamp+".png")
-	_, err = run(p.ffmpegPath,
+	if _, err = run(p.ffmpegPath,
 		"-hide_banner", "-loglevel", "error",
 		"-ss", strconv.FormatFloat(ts, 'f', 3, 64),
 		"-i", path,
 		"-frames:v", "1",
 		"-vf", "scale=320:-1",
 		"-y", outPath,
-	)
-	if err != nil {
+	); err != nil {
 		return "", err
 	}
-	return outPath, nil
+	defer os.Remove(outPath)
+	data, err := os.ReadFile(outPath)
+	if err != nil {
+		return "", fmt.Errorf("read thumbnail: %w", err)
+	}
+	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(data), nil
 }
 
 func sanitize(s string) string {

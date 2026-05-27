@@ -12,7 +12,7 @@ The program allows you to select files without dealing with command line, calcul
 
 Well, and build shiny interactive graphs of course:
 
-<p align="center"><img src="screenshots/screenshot.1.7.0.png" width="900"/></p>
+<p align="center"><img src="screenshots/screenshot-1_0_0.png" width="900"/></p>
 
 
 

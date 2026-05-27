@@ -24,6 +24,8 @@ type RunRequest struct {
 	Metrics       []string `json:"metrics"` // PSNR/SSIM/VMAF/XPSNR
 	Skip          float64  `json:"skip"`
 	Duration      float64  `json:"duration"`
+	StartFrame    int      `json:"startFrame"` // optional; when >0 overrides Skip
+	EndFrame      int      `json:"endFrame"`   // optional; when >StartFrame overrides Duration
 	Scaling       string   `json:"scaling"`
 	VMAFModel     string   `json:"vmafModel"`
 	VMAFPool      string   `json:"vmafPool"`
@@ -93,6 +95,17 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) error {
 		return fmt.Errorf("probe reference: %w", err)
 	}
 	r.emit("mediainfo", map[string]any{"file": req.RefPath, "info": refInfo, "kind": "reference"})
+
+	// Convert frame-based range to seconds, using the reference frame rate.
+	// Frame range, when provided, overrides time-based Skip/Duration.
+	if refInfo.FrameRate > 0 {
+		if req.StartFrame > 0 {
+			req.Skip = float64(req.StartFrame) / refInfo.FrameRate
+		}
+		if req.EndFrame > 0 && req.EndFrame > req.StartFrame {
+			req.Duration = float64(req.EndFrame-req.StartFrame) / refInfo.FrameRate
+		}
+	}
 
 	modelW, modelH := vmafModelResolution(req.VMAFModel)
 
@@ -178,6 +191,22 @@ func (r *Runner) runOne(
 	modelW, modelH int,
 ) error {
 	id := fmt.Sprintf("%d-%s", time.Now().UnixNano(), strings.ToLower(string(kind)))
+
+	// DEBUG: Log VMAF-specific diagnostics
+	if kind == ffmpeg.MetricVMAF {
+		r.emit("debug:vmaf", map[string]any{
+			"vmafModel":     req.VMAFModel,
+			"inBuildVMAF":   r.info.InBuildVMAF,
+			"refSize":       fmt.Sprintf("%dx%d", refInfo.Width, refInfo.Height),
+			"distSize":      fmt.Sprintf("%dx%d", distInfo.Width, distInfo.Height),
+			"modelTarget":   fmt.Sprintf("%dx%d", modelW, modelH),
+			"vmafUpscale":   req.VMAFUpscale,
+			"nThreads":      req.NThreads,
+			"vmafPhone":     req.VMAFPhone,
+			"vmafPool":      req.VMAFPool,
+			"vmafSubsample": req.VMAFSubsample,
+		})
+	}
 	tmpDir := req.TempDir
 	if tmpDir == "" {
 		tmpDir = os.TempDir()
@@ -238,21 +267,6 @@ func (r *Runner) runOne(
 	// Parse ffmpeg progress (time= speed=) from stderr; emit "time"
 	go r.streamFFmpegStderr(stderr, dist, kind)
 
-	if waitErr := ex.Wait(); waitErr != nil {
-		var exitErr *exec.ExitError
-		if errors.As(waitErr, &exitErr) {
-			return fmt.Errorf("ffmpeg failed for %s/%s: %v", filepath.Base(dist), kind, waitErr)
-		}
-		return waitErr
-	}
-
-	// Parse stats file
-	f, err := os.Open(cmd.TmpStat)
-	if err != nil {
-		return fmt.Errorf("open stats file: %w", err)
-	}
-	defer f.Close()
-
 	emitFrame := func(fs ffmpeg.FrameSample) {
 		r.emit("metric:frame", map[string]any{
 			"file":   dist,
@@ -262,19 +276,51 @@ func (r *Runner) runOne(
 			"extra":  fs.Extra,
 		})
 	}
+
+	// Tail the stats file in real time so per-frame events stream to the UI
+	// while ffmpeg is still running. PSNR/SSIM/XPSNR write line-by-line.
+	// libvmaf flushes only at the end — in that case the tail will simply
+	// deliver everything in one final burst, which is still correct.
+	var ffmpegErr error
+	ffmpegDone := make(chan struct{})
+	go func() {
+		ffmpegErr = ex.Wait()
+		close(ffmpegDone)
+	}()
+
+	pr, pw := io.Pipe()
+	tailErr := make(chan error, 1)
+	go func() {
+		tailErr <- tailFile(ctx, cmd.TmpStat, ffmpegDone, pw)
+	}()
+
 	var sum *ffmpeg.Summary
+	var parseErr error
 	switch kind {
 	case ffmpeg.MetricPSNR:
-		sum, err = ffmpeg.ParsePSNR(f, emitFrame)
+		sum, parseErr = ffmpeg.ParsePSNR(pr, emitFrame)
 	case ffmpeg.MetricSSIM:
-		sum, err = ffmpeg.ParseSSIM(f, emitFrame)
+		sum, parseErr = ffmpeg.ParseSSIM(pr, emitFrame)
 	case ffmpeg.MetricXPSNR:
-		sum, err = ffmpeg.ParseXPSNR(f, emitFrame)
+		sum, parseErr = ffmpeg.ParseXPSNR(pr, emitFrame)
 	case ffmpeg.MetricVMAF:
-		sum, err = ffmpeg.ParseVMAFCSV(f, emitFrame)
+		sum, parseErr = ffmpeg.ParseVMAFCSV(pr, emitFrame)
 	}
-	if err != nil {
-		return err
+	// Drain pipe close + collect tail / ffmpeg results.
+	_ = pr.Close()
+	if tErr := <-tailErr; tErr != nil && parseErr == nil {
+		parseErr = tErr
+	}
+	<-ffmpegDone
+	if ffmpegErr != nil {
+		var exitErr *exec.ExitError
+		if errors.As(ffmpegErr, &exitErr) {
+			return fmt.Errorf("ffmpeg failed for %s/%s: %v", filepath.Base(dist), kind, ffmpegErr)
+		}
+		return ffmpegErr
+	}
+	if parseErr != nil {
+		return parseErr
 	}
 	r.mu.Lock()
 	r.summaries[SummaryKey{File: dist, Metric: string(kind)}] = sum
@@ -312,6 +358,70 @@ func (r *Runner) streamFFmpegStderr(rd io.ReadCloser, file string, metric ffmpeg
 				"metric": metric,
 				"line":   line,
 			})
+		}
+	}
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// tailFile follows path while ffmpeg is running: it polls for the file's
+// existence, streams any newly appended bytes into w, and after ffmpegDone
+// fires it performs one last read to drain whatever was flushed at exit
+// (this is how we capture libvmaf's end-of-run dump). w is closed on return.
+func tailFile(ctx context.Context, path string, ffmpegDone <-chan struct{}, w *io.PipeWriter) error {
+	defer w.Close()
+	var f *os.File
+	defer func() {
+		if f != nil {
+			f.Close()
+		}
+	}()
+	openIfNeeded := func() {
+		if f != nil {
+			return
+		}
+		if of, err := os.Open(path); err == nil {
+			f = of
+		}
+	}
+	copyAvailable := func() error {
+		if f == nil {
+			return nil
+		}
+		buf := make([]byte, 32*1024)
+		for {
+			n, err := f.Read(buf)
+			if n > 0 {
+				if _, werr := w.Write(buf[:n]); werr != nil {
+					return werr
+				}
+			}
+			if err == io.EOF || n == 0 {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+		}
+	}
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ffmpegDone:
+			// final drain: file may have been written/flushed just now
+			openIfNeeded()
+			return copyAvailable()
+		case <-ticker.C:
+			openIfNeeded()
+			if err := copyAvailable(); err != nil {
+				return err
+			}
 		}
 	}
 }
