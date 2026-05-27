@@ -60,7 +60,10 @@ func main() {
 			DisableWindowIcon:    false,
 		},
 		Mac: &mac.Options{
-			TitleBar:             mac.TitleBarHiddenInset(),
+			// Use the default native title bar so the traffic lights sit in
+			// their own row above our menu bar — avoids the overlap/alignment
+			// issues caused by TitleBarHiddenInset.
+			TitleBar:             mac.TitleBarDefault(),
 			WebviewIsTransparent: false,
 			WindowIsTranslucent:  false,
 			About: &mac.AboutInfo{

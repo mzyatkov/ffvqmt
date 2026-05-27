@@ -61,10 +61,14 @@ label { font-size: 13px; }
   display: flex; gap: 4px; padding: 4px 10px; background: var(--bg-2);
   border-bottom: 1px solid var(--border); align-items: center;
   -webkit-app-region: drag;
+  --wails-draggable: drag;
+  app-region: drag;
 }
 .menu-bar .item {
   padding: 4px 10px; border-radius: 4px; cursor: pointer; user-select: none;
   -webkit-app-region: no-drag;
+  --wails-draggable: no-drag;
+  app-region: no-drag;
 }
 .menu-bar .item:hover { background: var(--bg-3); }
 

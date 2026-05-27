@@ -13,6 +13,12 @@ const session = useSession();
 const showOptions = ref(false);
 
 onMounted(async () => {
+  // Add platform class for OS-specific styling (e.g. macOS traffic-light inset).
+  const ua = navigator.userAgent || "";
+  const platform = (navigator as any).platform || "";
+  if (/Mac|iPhone|iPad|iPod/i.test(platform) || /Mac OS X/i.test(ua)) {
+    document.body.classList.add("platform-mac");
+  }
   session.bindEvents();
   await session.detect();
   await session.loadInitialFromCLI();

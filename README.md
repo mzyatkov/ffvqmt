@@ -66,7 +66,7 @@ Run `FFvqmt -help` for the full list.
 
 ## Build from source
 
-Requires **Go 1.22+**, **Node 20+**, **[Wails v2](https://wails.io/)**.
+Requires **Go 1.26+**, **Node 20+**, **[Wails v2](https://wails.io/)**.
 
 ```bash
 go install github.com/wailsapp/wails/v2/cmd/wails@v2.9.2
