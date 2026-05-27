@@ -6,12 +6,20 @@ export function CancelRun() {
   return window['go']['main']['App']['CancelRun']();
 }
 
+export function DefaultRawFormat(arg1) {
+  return window['go']['main']['App']['DefaultRawFormat'](arg1);
+}
+
 export function DetectFFmpeg() {
   return window['go']['main']['App']['DetectFFmpeg']();
 }
 
 export function GetInitialOptions() {
   return window['go']['main']['App']['GetInitialOptions']();
+}
+
+export function IsRawVideo(arg1) {
+  return window['go']['main']['App']['IsRawVideo'](arg1);
 }
 
 export function LoadProject(arg1) {
@@ -22,8 +30,16 @@ export function MakeThumbnail(arg1) {
   return window['go']['main']['App']['MakeThumbnail'](arg1);
 }
 
+export function MakeThumbnailRaw(arg1, arg2) {
+  return window['go']['main']['App']['MakeThumbnailRaw'](arg1, arg2);
+}
+
 export function MediaInfo(arg1) {
   return window['go']['main']['App']['MediaInfo'](arg1);
+}
+
+export function MediaInfoRaw(arg1, arg2) {
+  return window['go']['main']['App']['MediaInfoRaw'](arg1, arg2);
 }
 
 export function SaveFileDialog(arg1, arg2) {

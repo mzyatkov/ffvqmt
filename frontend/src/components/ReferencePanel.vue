@@ -1,10 +1,15 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import { useSession } from "../stores/session";
-import { API } from "../api/wails";
+import { API, type RawFormat } from "../api/wails";
+import RawFormatForm from "./RawFormatForm.vue";
 
 const session = useSession();
 const dragging = ref(false);
+
+function applyRefRaw(r: RawFormat) {
+  void session.setRefRaw(r);
+}
 
 async function pick() {
   const p = await API.selectFiles(false, "Select reference");
@@ -64,6 +69,13 @@ function fmtBitrate(b: number) {
         Drop reference file here<br/>or click <b>…</b> to choose
       </template>
     </div>
+
+    <RawFormatForm
+      v-if="session.refNeedsRaw"
+      :model-value="session.refRaw"
+      label="Reference raw video parameters"
+      @apply="applyRefRaw"
+    />
 
     <img v-if="session.refThumb"
          :src="session.refThumb"

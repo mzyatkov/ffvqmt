@@ -19,24 +19,26 @@ import (
 
 // RunRequest is sent from the UI to the backend to start a calculation.
 type RunRequest struct {
-	RefPath       string   `json:"refPath"`
-	DistPaths     []string `json:"distPaths"`
-	Metrics       []string `json:"metrics"` // PSNR/SSIM/VMAF/XPSNR
-	Skip          float64  `json:"skip"`
-	Duration      float64  `json:"duration"`
-	StartFrame    int      `json:"startFrame"` // optional; when >0 overrides Skip
-	EndFrame      int      `json:"endFrame"`   // optional; when >StartFrame overrides Duration
-	Scaling       string   `json:"scaling"`
-	VMAFModel     string   `json:"vmafModel"`
-	VMAFPool      string   `json:"vmafPool"`
-	VMAFSubsample int      `json:"vmafSubsample"`
-	VMAFPhone     bool     `json:"vmafPhone"`
-	VMAFUpscale   bool     `json:"vmafUpscale"`
-	LogCommands   bool     `json:"logCommands"`
-	LogFrames     bool     `json:"logFrames"`
-	LogFramesDir  string   `json:"logFramesDir"`
-	TempDir       string   `json:"tempDir"`
-	NThreads      int      `json:"nThreads"`
+	RefPath       string                       `json:"refPath"`
+	DistPaths     []string                     `json:"distPaths"`
+	RefRaw        *ffmpeg.RawFormat            `json:"refRaw,omitempty"`
+	DistRaw       map[string]*ffmpeg.RawFormat `json:"distRaw,omitempty"`
+	Metrics       []string                     `json:"metrics"` // PSNR/SSIM/VMAF/XPSNR
+	Skip          float64                      `json:"skip"`
+	Duration      float64                      `json:"duration"`
+	StartFrame    int                          `json:"startFrame"` // optional; when >0 overrides Skip
+	EndFrame      int                          `json:"endFrame"`   // optional; when >StartFrame overrides Duration
+	Scaling       string                       `json:"scaling"`
+	VMAFModel     string                       `json:"vmafModel"`
+	VMAFPool      string                       `json:"vmafPool"`
+	VMAFSubsample int                          `json:"vmafSubsample"`
+	VMAFPhone     bool                         `json:"vmafPhone"`
+	VMAFUpscale   bool                         `json:"vmafUpscale"`
+	LogCommands   bool                         `json:"logCommands"`
+	LogFrames     bool                         `json:"logFrames"`
+	LogFramesDir  string                       `json:"logFramesDir"`
+	TempDir       string                       `json:"tempDir"`
+	NThreads      int                          `json:"nThreads"`
 
 	AutoSaveResults     bool   `json:"autoSaveResults"`
 	AutoSaveResultsFile string `json:"autoSaveResultsFile"`
@@ -90,7 +92,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) error {
 		}
 	}
 
-	refInfo, err := r.prober.MediaInfo(req.RefPath)
+	refInfo, err := r.prober.MediaInfoRaw(req.RefPath, req.RefRaw)
 	if err != nil {
 		return fmt.Errorf("probe reference: %w", err)
 	}
@@ -120,7 +122,8 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) error {
 		default:
 		}
 
-		distInfo, err := r.prober.MediaInfo(dist)
+		distRaw := req.DistRaw[dist]
+		distInfo, err := r.prober.MediaInfoRaw(dist, distRaw)
 		if err != nil {
 			r.emit("file:error", map[string]any{"file": dist, "error": err.Error()})
 			continue
@@ -140,7 +143,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) error {
 				r.emit("run:progress", map[string]any{"percent": pct(done, total)})
 				continue
 			}
-			err := r.runOne(ctx, ffPath, req, dist, refInfo, distInfo, kind, modelW, modelH)
+			err := r.runOne(ctx, ffPath, req, dist, distRaw, refInfo, distInfo, kind, modelW, modelH)
 			if err != nil && firstErr == nil {
 				firstErr = err
 			}
@@ -186,6 +189,7 @@ func (r *Runner) runOne(
 	ffPath string,
 	req RunRequest,
 	dist string,
+	distRaw *ffmpeg.RawFormat,
 	refInfo, distInfo *ffmpeg.MediaInfo,
 	kind ffmpeg.MetricKind,
 	modelW, modelH int,
@@ -214,6 +218,8 @@ func (r *Runner) runOne(
 	opts := ffmpeg.BuildOptions{
 		RefPath:        req.RefPath,
 		DistPath:       dist,
+		RefRaw:         req.RefRaw,
+		DistRaw:        distRaw,
 		Skip:           req.Skip,
 		Duration:       req.Duration,
 		Scaling:        strings.ToLower(req.Scaling),

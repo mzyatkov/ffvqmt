@@ -57,11 +57,22 @@ export interface MediaInfo {
   videoCodec: string;
   audioCodec: string;
   sizeBytes: number;
+  isRaw?: boolean;
+}
+
+export interface RawFormat {
+  format: string;     // ffmpeg demuxer, e.g. "rawvideo"
+  pixFmt: string;     // e.g. "yuv420p"
+  width: number;
+  height: number;
+  frameRate: number;
 }
 
 export interface RunRequest {
   refPath: string;
   distPaths: string[];
+  refRaw?: RawFormat | null;
+  distRaw?: Record<string, RawFormat | null>;
   metrics: string[];
   skip: number;
   duration: number;
@@ -92,7 +103,11 @@ declare global {
           GetInitialOptions(): Promise<CliOptions>;
           DetectFFmpeg(): Promise<ProbeInfo>;
           MediaInfo(path: string): Promise<MediaInfo>;
+          MediaInfoRaw(path: string, raw: RawFormat | null): Promise<MediaInfo>;
+          IsRawVideo(path: string): Promise<boolean>;
+          DefaultRawFormat(path: string): Promise<RawFormat | null>;
           MakeThumbnail(path: string): Promise<string>;
+          MakeThumbnailRaw(path: string, raw: RawFormat | null): Promise<string>;
           SelectFiles(multi: boolean, title: string): Promise<string[]>;
           SelectDirectory(title: string): Promise<string>;
           SaveFileDialog(title: string, defaultName: string): Promise<string>;
@@ -127,11 +142,23 @@ export const API = {
   detectFFmpeg: (): Promise<ProbeInfo> =>
     isWails() ? window.go!.main!.App!.DetectFFmpeg() : notAvailable("DetectFFmpeg"),
 
-  mediaInfo: (path: string): Promise<MediaInfo> =>
-    isWails() ? window.go!.main!.App!.MediaInfo(path) : notAvailable("MediaInfo"),
+  mediaInfo: (path: string, raw?: RawFormat | null): Promise<MediaInfo> => {
+    if (!isWails()) return notAvailable("MediaInfo");
+    if (raw) return window.go!.main!.App!.MediaInfoRaw(path, raw);
+    return window.go!.main!.App!.MediaInfo(path);
+  },
 
-  makeThumbnail: (path: string): Promise<string> =>
-    isWails() ? window.go!.main!.App!.MakeThumbnail(path) : notAvailable("MakeThumbnail"),
+  isRawVideo: (path: string): Promise<boolean> =>
+    isWails() ? window.go!.main!.App!.IsRawVideo(path) : Promise.resolve(false),
+
+  defaultRawFormat: (path: string): Promise<RawFormat | null> =>
+    isWails() ? window.go!.main!.App!.DefaultRawFormat(path) : Promise.resolve(null),
+
+  makeThumbnail: (path: string, raw?: RawFormat | null): Promise<string> => {
+    if (!isWails()) return notAvailable("MakeThumbnail");
+    if (raw) return window.go!.main!.App!.MakeThumbnailRaw(path, raw);
+    return window.go!.main!.App!.MakeThumbnail(path);
+  },
 
   selectFiles: (multi: boolean, title: string): Promise<string[]> =>
     isWails() ? window.go!.main!.App!.SelectFiles(multi, title) : notAvailable("SelectFiles"),

@@ -49,16 +49,21 @@ case "$PLATFORM" in
     cp "$tmp"/ffmpeg-*/bin/ffprobe "$TARGET/ffprobe"
     ;;
   darwin-arm64)
-    curl -fL https://www.osxexperts.net/ffmpeg7arm.zip  -o "$tmp/ff.zip"
-    curl -fL https://www.osxexperts.net/ffprobe7arm.zip -o "$tmp/fp.zip"
+    # ffmpeg 8.1 — first osxexperts build that ships the `xpsnr` filter
+    # (added upstream in 7.1). Older 7.0 builds silently disable the
+    # XPSNR checkbox in the UI because the filter is not present.
+    curl -fL https://www.osxexperts.net/ffmpeg81arm.zip  -o "$tmp/ff.zip"
+    curl -fL https://www.osxexperts.net/ffprobe81arm.zip -o "$tmp/fp.zip"
     unzip -o "$tmp/ff.zip" -d "$TARGET" >/dev/null
     unzip -o "$tmp/fp.zip" -d "$TARGET" >/dev/null
     xattr -dr com.apple.quarantine "$TARGET/ffmpeg"  2>/dev/null || true
     xattr -dr com.apple.quarantine "$TARGET/ffprobe" 2>/dev/null || true
     ;;
   darwin-amd64)
-    curl -fL https://www.osxexperts.net/ffmpeg7intel.zip  -o "$tmp/ff.zip"
-    curl -fL https://www.osxexperts.net/ffprobe7intel.zip -o "$tmp/fp.zip"
+    # ffmpeg 8.0 (osxexperts currently ships 8.0 for Intel, 8.1 for ARM).
+    # Both include the `xpsnr` filter required by the XPSNR metric.
+    curl -fL https://www.osxexperts.net/ffmpeg80intel.zip  -o "$tmp/ff.zip"
+    curl -fL https://www.osxexperts.net/ffprobe80intel.zip -o "$tmp/fp.zip"
     unzip -o "$tmp/ff.zip" -d "$TARGET" >/dev/null
     unzip -o "$tmp/fp.zip" -d "$TARGET" >/dev/null
     xattr -dr com.apple.quarantine "$TARGET/ffmpeg"  2>/dev/null || true
@@ -85,4 +90,4 @@ fi
 
 echo "✓ ffmpeg bundled into $TARGET"
 "$TARGET/ffmpeg" -hide_banner -version | head -1
-"$TARGET/ffmpeg" -hide_banner -filters 2>/dev/null | grep -E 'libvmaf|xpsnr' || true
+"$TARGET/ffmpeg" -hide_banner -filters 2>/dev/null | grep -E 'libvmaf|xpsnr|psnr|ssim' || true
