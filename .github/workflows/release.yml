@@ -52,7 +52,8 @@ jobs:
           node-version: "20"
 
       - name: Install Wails CLI
-        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.9.2
+        # Must match the wails/v2 version in go.mod.
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
 
       # --- Linux system deps for webkit2gtk ----------------------------------
       - name: Install Linux WebKit deps
@@ -61,10 +62,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             libgtk-3-dev \
-            libwebkit2gtk-4.1-dev \
+            libwebkit2gtk-4.0-dev \
             pkg-config \
             build-essential \
-            libsoup-3.0-dev \
+            libsoup2.4-dev \
             file \
             wget
 
@@ -102,7 +103,7 @@ jobs:
           Copy-Item "build/bin/FFvqmt.exe"  "$stage/FFvqmt.exe"
           Copy-Item "build/bin/ffmpeg.exe"  "$stage/ffmpeg.exe"
           Copy-Item "build/bin/ffprobe.exe" "$stage/ffprobe.exe"
-          Copy-Item -Recurse "vmaf-models" "$stage/vmaf-models"
+          if (Test-Path "vmaf-models") { Copy-Item -Recurse "vmaf-models" "$stage/vmaf-models" }
           Copy-Item "README.md" "$stage/README.md"
           if (Test-Path "LICENSE") { Copy-Item "LICENSE" "$stage/LICENSE" }
           Compress-Archive -Path "$stage/*" -DestinationPath "${{ matrix.artifact_name }}" -Force
@@ -119,7 +120,7 @@ jobs:
           cp build/bin/ffmpeg  "$stage/ffmpeg"
           cp build/bin/ffprobe "$stage/ffprobe"
           chmod +x "$stage/FFvqmt" "$stage/ffmpeg" "$stage/ffprobe"
-          cp -r vmaf-models "$stage/vmaf-models"
+          [ -d vmaf-models ] && cp -r vmaf-models "$stage/vmaf-models" || true
           cp README.md "$stage/"
           [ -f LICENSE ] && cp LICENSE "$stage/" || true
           cat > "$stage/FFvqmt.desktop" <<EOF
@@ -142,7 +143,7 @@ jobs:
             cp "$stage/FFvqmt"  $appdir/usr/bin/FFvqmt
             cp "$stage/ffmpeg"  $appdir/usr/bin/ffmpeg
             cp "$stage/ffprobe" $appdir/usr/bin/ffprobe
-            cp -r vmaf-models $appdir/usr/bin/vmaf-models
+            [ -d vmaf-models ] && cp -r vmaf-models $appdir/usr/bin/vmaf-models || true
             cp "$stage/FFvqmt.desktop" $appdir/FFvqmt.desktop
             cp build/appicon.png $appdir/ffvqmt.png || true
             cat > $appdir/AppRun <<'EOAR'
@@ -164,8 +165,10 @@ jobs:
           if [ ! -d "$APP" ]; then
             echo "App bundle not found at $APP"; ls -la build/bin || true; exit 1
           fi
-          mkdir -p "$APP/Contents/Resources/vmaf-models"
-          cp -R vmaf-models/. "$APP/Contents/Resources/vmaf-models/" || true
+          if [ -d vmaf-models ]; then
+            mkdir -p "$APP/Contents/Resources/vmaf-models"
+            cp -R vmaf-models/. "$APP/Contents/Resources/vmaf-models/" || true
+          fi
           # ffmpeg+ffprobe are already copied into $APP/Contents/MacOS by the
           # postbuild hook (see build/download-ffmpeg.sh).
           test -x "$APP/Contents/MacOS/ffmpeg"  || (echo "bundled ffmpeg missing in .app"; exit 1)
